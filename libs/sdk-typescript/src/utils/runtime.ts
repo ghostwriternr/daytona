@@ -37,35 +37,10 @@ export const RuntimeEnvironment = {
   },
 
   /**
-   * Check if running in Deno environment
-   */
-  isDeno(): boolean {
-    return 'Deno' in globalThis && typeof (globalThis as { Deno?: unknown }).Deno !== 'undefined'
-  },
-
-  /**
-   * Check if running in Browser environment
-   */
-  isBrowser(): boolean {
-    return typeof window !== 'undefined' && typeof window.document !== 'undefined'
-  },
-
-  /**
    * Check if Web Streams API is available
    */
   hasWebStreams(): boolean {
     return typeof globalThis.ReadableStream === 'function' && typeof globalThis.WritableStream === 'function'
-  },
-
-  /**
-   * Detect the runtime environment type
-   */
-  detect(): 'node' | 'cloudflare' | 'deno' | 'browser' | 'unknown' {
-    if (this.isNode()) return 'node'
-    if (this.isCloudflareWorkers()) return 'cloudflare'
-    if (this.isDeno()) return 'deno'
-    if (this.isBrowser()) return 'browser'
-    return 'unknown'
   },
 
   /**
@@ -95,18 +70,6 @@ function isNodeStream(obj: unknown): boolean {
 }
 
 /**
- * Type guard to check if an object is async iterable
- */
-function isAsyncIterable<T = unknown>(obj: unknown): obj is AsyncIterable<T> {
-  return (
-    obj !== null &&
-    typeof obj === 'object' &&
-    Symbol.asyncIterator in obj &&
-    typeof obj[Symbol.asyncIterator] === 'function'
-  )
-}
-
-/**
  * Type guard to check if an object is a Web ReadableStream
  */
 function isReadableStream(obj: unknown): obj is ReadableStream {
@@ -121,4 +84,4 @@ function isReadableStream(obj: unknown): obj is ReadableStream {
 }
 
 // Export type guards for internal use by UniversalStream
-export { isNodeStream, isAsyncIterable, isReadableStream }
+export { isNodeStream, isReadableStream }

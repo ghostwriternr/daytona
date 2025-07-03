@@ -4,7 +4,7 @@
  */
 
 import { DaytonaError } from '../errors/DaytonaError'
-import { RuntimeEnvironment, isNodeStream, isAsyncIterable, isReadableStream } from './runtime'
+import { RuntimeEnvironment, isNodeStream, isReadableStream } from './runtime'
 
 /**
  * Type definition for Node.js readable streams with event emitter methods
@@ -43,11 +43,6 @@ interface UniversalStream {
    * Cancel/cleanup the stream
    */
   cancel(): Promise<void>
-
-  /**
-   * Check if stream is still readable
-   */
-  readonly readable: boolean
 }
 
 /**
@@ -94,10 +89,6 @@ class WebStreamAdapter implements UniversalStream {
     } else if (!this.stream.locked) {
       await this.stream.cancel()
     }
-  }
-
-  get readable(): boolean {
-    return !this._cancelled && !this.stream.locked
   }
 }
 
@@ -226,75 +217,6 @@ class NodeStreamAdapter implements UniversalStream {
       ;(this.stream as NodeReadableStream & { close(): void }).close()
     }
   }
-
-  get readable(): boolean {
-    return !this.destroyed && 'readable' in this.stream && this.stream.readable !== false
-  }
-}
-
-/**
- * Adapter for async iterables
- */
-class AsyncIterableAdapter<T = Buffer | string | Uint8Array> implements UniversalStream {
-  private cancelled = false
-  private iterator: AsyncIterator<T> | null = null
-
-  constructor(private iterable: AsyncIterable<T>) {}
-
-  async *[Symbol.asyncIterator](): AsyncIterableIterator<Uint8Array> {
-    if (this.cancelled) {
-      throw new DaytonaError('Stream has been cancelled', 'STREAM_CANCELLED')
-    }
-
-    this.iterator = this.iterable[Symbol.asyncIterator]()
-
-    try {
-      while (!this.cancelled) {
-        const { done, value } = await this.iterator.next()
-        if (done) break
-        if (value) {
-          yield this.toUint8Array(value)
-        }
-      }
-    } finally {
-      if (this.iterator && typeof this.iterator.return === 'function') {
-        await this.iterator.return()
-      }
-    }
-  }
-
-  private toUint8Array(value: T): Uint8Array {
-    if (value instanceof Uint8Array) return value
-
-    if (typeof value === 'string') {
-      return new TextEncoder().encode(value)
-    }
-
-    if (typeof Buffer !== 'undefined' && Buffer.isBuffer(value)) {
-      return new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
-    }
-
-    if (value instanceof ArrayBuffer) {
-      return new Uint8Array(value)
-    }
-
-    if (ArrayBuffer.isView(value)) {
-      return new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
-    }
-
-    throw new DaytonaError(`Unexpected value type in async iterable: ${typeof value}`, 'INVALID_ITERABLE_VALUE')
-  }
-
-  async cancel(): Promise<void> {
-    this.cancelled = true
-    if (this.iterator && typeof this.iterator.return === 'function') {
-      await this.iterator.return()
-    }
-  }
-
-  get readable(): boolean {
-    return !this.cancelled
-  }
 }
 
 /**
@@ -324,20 +246,15 @@ export function createUniversalStream(source: unknown): UniversalStream {
     return new NodeStreamAdapter(source as NodeReadableStream)
   }
 
-  // Async iterables
-  if (isAsyncIterable(source)) {
-    return new AsyncIterableAdapter(source)
-  }
-
   // If we have a data property, check if it's a stream (Axios response pattern)
   if (typeof source === 'object' && 'data' in source) {
     return createUniversalStream((source as { data: unknown }).data)
   }
 
   throw new DaytonaError(
-    `Unsupported stream type. Expected ReadableStream, Node.js Stream, or AsyncIterable. ` +
+    `Unsupported stream type. Expected ReadableStream or Node.js Stream. ` +
       `Got: ${source?.constructor?.name || typeof source}. ` +
-      `Runtime: ${RuntimeEnvironment.detect()}`,
+      `Runtime: ${RuntimeEnvironment.isNode() ? 'node' : 'web'}`,
     'UNSUPPORTED_STREAM_TYPE',
   )
 }
