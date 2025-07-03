@@ -8,6 +8,7 @@ import { SandboxCodeToolbox } from './Sandbox'
 import { ExecuteResponse } from './types/ExecuteResponse'
 import { ArtifactParser } from './utils/ArtifactParser'
 import { processStreamingResponse } from './utils/Stream'
+import { RuntimeEnvironment } from './utils/runtime'
 
 /**
  * Parameters for code execution.
@@ -311,11 +312,19 @@ export class Process {
       return response.data
     }
 
+    // Determine appropriate request configuration based on runtime
+    const isWebEnvironment = RuntimeEnvironment.isWebEnvironment()
+
     await processStreamingResponse(
-      () =>
-        this.toolboxApi.getSessionCommandLogs(this.sandboxId, sessionId, commandId, undefined, true, {
-          responseType: 'stream',
-        }),
+      () => {
+        // In web environments (Cloudflare Workers, browsers), we need to handle streaming differently
+        // Axios in web environments doesn't support responseType: 'stream' the same way as Node.js
+        const config = isWebEnvironment
+          ? {} // Let Axios handle the response naturally, we'll extract the stream from response.body
+          : { responseType: 'stream' as const } // Node.js environments can use traditional streaming
+
+        return this.toolboxApi.getSessionCommandLogs(this.sandboxId, sessionId, commandId, undefined, true, config)
+      },
       onLogs,
       () =>
         this.getSessionCommand(sessionId, commandId).then((res) => res.exitCode !== null && res.exitCode !== undefined),

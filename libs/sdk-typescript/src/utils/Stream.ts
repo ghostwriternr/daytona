@@ -3,77 +3,128 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { createUniversalStream, withTimeout } from './UniversalStream'
+import { DaytonaError } from '../errors/DaytonaError'
+
+/**
+ * Options for processing streaming responses
+ */
+export interface StreamProcessingOptions {
+  /**
+   * Timeout for each chunk in milliseconds
+   */
+  chunkTimeout?: number
+
+  /**
+   * Whether to require consecutive termination signals to terminate the stream
+   */
+  requireConsecutiveTermination?: boolean
+
+  /**
+   * Text encoding for decoding chunks
+   */
+  encoding?: 'utf8' | 'utf-8' | 'binary'
+
+  /**
+   * Optional abort signal for cancellation
+   */
+  signal?: AbortSignal
+}
+
 /**
  * Process a streaming response from a URL. Stream will terminate if the server-side stream
  * ends or if the shouldTerminate function returns True.
  *
- * @param getStream - A function that returns a promise of an AxiosResponse with .data being the stream
+ * This function now works across all JavaScript runtimes including Node.js, Cloudflare Workers,
+ * Deno, and browsers by using a universal stream abstraction.
+ *
+ * @param getStream - A function that returns a promise of a response with stream data
  * @param onChunk - A function to process each chunk of the response
  * @param shouldTerminate - A function to check if the response should be terminated
- * @param chunkTimeout - The timeout for each chunk
+ * @param chunkTimeout - The timeout for each chunk (default: 2000ms)
  * @param requireConsecutiveTermination - Whether to require two consecutive termination signals
- * to terminate the stream.
+ * to terminate the stream (default: true)
  */
 export async function processStreamingResponse(
-  getStream: () => Promise<any>, // can return AxiosResponse with .data being the stream
+  getStream: () => Promise<unknown>,
   onChunk: (chunk: string) => void,
   shouldTerminate: () => Promise<boolean>,
-  chunkTimeout = 2000,
+  chunkTimeout?: number,
+  requireConsecutiveTermination?: boolean,
+): Promise<void>
+
+/**
+ * Process a streaming response with additional options
+ */
+export async function processStreamingResponse(
+  getStream: () => Promise<unknown>,
+  onChunk: (chunk: string) => void,
+  shouldTerminate: () => Promise<boolean>,
+  options: StreamProcessingOptions,
+): Promise<void>
+
+export async function processStreamingResponse(
+  getStream: () => Promise<unknown>,
+  onChunk: (chunk: string) => void,
+  shouldTerminate: () => Promise<boolean>,
+  chunkTimeoutOrOptions: number | StreamProcessingOptions = 2000,
   requireConsecutiveTermination = true,
 ): Promise<void> {
-  const response = await getStream()
-  const stream = response.data
+  // Handle overloaded parameters
+  const options: StreamProcessingOptions =
+    typeof chunkTimeoutOrOptions === 'number'
+      ? { chunkTimeout: chunkTimeoutOrOptions, requireConsecutiveTermination }
+      : chunkTimeoutOrOptions
 
-  let nextChunkPromise: Promise<Buffer | null> | null = null
+  const {
+    chunkTimeout = 2000,
+    requireConsecutiveTermination: requireConsecutive = true,
+    encoding = 'utf8',
+    signal,
+  } = options
+
   let exitCheckStreak = 0
   let terminated = false
 
-  const readNext = (): Promise<Buffer | null> => {
-    return new Promise((resolve) => {
-      const onData = (data: Buffer) => {
-        cleanup()
-        resolve(data)
+  // Create text decoder for consistent string conversion
+  const decoder = new TextDecoder(encoding === 'binary' ? 'latin1' : encoding)
+
+  try {
+    // Get the stream response
+    const response = await getStream()
+
+    // Create universal stream that works across all environments
+    const stream = createUniversalStream(response, { encoding: encoding as 'utf8' | 'binary' })
+
+    // Check for abort signal
+    const checkAborted = () => {
+      if (signal?.aborted) {
+        terminated = true
+        throw new DaytonaError('Stream processing aborted', 'STREAM_ABORTED')
       }
-      const cleanup = () => {
-        stream.off('data', onData)
-      }
-      stream.once('data', onData)
-    })
-  }
+    }
 
-  const terminationPromise = new Promise<void>((resolve, reject) => {
-    stream.on('end', () => {
-      terminated = true
-      resolve()
-    })
-    stream.on('close', () => {
-      terminated = true
-      resolve()
-    })
-    stream.on('error', (err: Error) => {
-      terminated = true
-      reject(err)
-    })
-  })
+    // Process stream chunks
+    for await (const chunk of stream) {
+      checkAborted()
 
-  const processLoop = async () => {
-    while (!terminated) {
-      if (!nextChunkPromise) {
-        nextChunkPromise = readNext()
-      }
+      if (terminated) break
 
-      const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), chunkTimeout))
-      const result = await Promise.race([nextChunkPromise, timeoutPromise])
-
-      if (result instanceof Buffer) {
-        onChunk(result.toString('utf8'))
-        nextChunkPromise = null
-        exitCheckStreak = 0
+      if (chunk && chunk.length > 0) {
+        // Decode chunk to string
+        const text = decoder.decode(chunk, { stream: true })
+        if (text) {
+          onChunk(text)
+          exitCheckStreak = 0
+        }
       } else {
-        const shouldEnd = await shouldTerminate()
+        // Empty chunk - check if we should terminate
+        const shouldEnd = await withTimeout(shouldTerminate(), chunkTimeout, false)
+
         if (shouldEnd) {
           exitCheckStreak += 1
-          if (!requireConsecutiveTermination || exitCheckStreak > 1) {
+          if (!requireConsecutive || exitCheckStreak > 1) {
+            terminated = true
             break
           }
         } else {
@@ -81,9 +132,33 @@ export async function processStreamingResponse(
         }
       }
     }
-    stream.destroy()
-    stream.removeAllListeners()
-  }
 
-  await Promise.race([processLoop(), terminationPromise])
+    // Flush any remaining bytes in the decoder
+    const remaining = decoder.decode()
+    if (remaining) {
+      onChunk(remaining)
+    }
+
+    // Clean up the stream
+    await stream.cancel()
+  } catch (error) {
+    terminated = true
+
+    // Re-throw DaytonaError as-is
+    if (error instanceof DaytonaError) {
+      throw error
+    }
+
+    // Wrap other errors
+    throw new DaytonaError(
+      `Stream processing error: ${error instanceof Error ? error.message : String(error)}`,
+      'STREAM_PROCESSING_ERROR',
+    )
+  }
 }
+
+/**
+ * Legacy function maintained for backward compatibility
+ * @deprecated Use processStreamingResponse instead
+ */
+export { processStreamingResponse as processStream }

@@ -10,6 +10,14 @@
 /**
  * Base error for Daytona SDK.
  */
-export class DaytonaError extends Error {}
+export class DaytonaError extends Error {
+  constructor(
+    message: string,
+    public code?: string,
+  ) {
+    super(message)
+    this.name = 'DaytonaError'
+  }
+}
 
 export class DaytonaNotFoundError extends DaytonaError {}
