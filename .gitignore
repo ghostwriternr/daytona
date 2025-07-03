@@ -70,3 +70,5 @@ examples/**/*.png
 **/.venv
 **/poetry.lock
 !/poetry.lock
+
+plans
