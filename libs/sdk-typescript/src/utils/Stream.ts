@@ -3,33 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { createUniversalStream, withTimeout } from './UniversalStream'
+import { createUniversalStream } from './UniversalStream'
 import { DaytonaError } from '../errors/DaytonaError'
-
-/**
- * Options for processing streaming responses
- */
-export interface StreamProcessingOptions {
-  /**
-   * Timeout for each chunk in milliseconds
-   */
-  chunkTimeout?: number
-
-  /**
-   * Whether to require consecutive termination signals to terminate the stream
-   */
-  requireConsecutiveTermination?: boolean
-
-  /**
-   * Text encoding for decoding chunks
-   */
-  encoding?: 'utf8' | 'utf-8' | 'binary'
-
-  /**
-   * Optional abort signal for cancellation
-   */
-  signal?: AbortSignal
-}
 
 /**
  * Process a streaming response from a URL. Stream will terminate if the server-side stream
@@ -49,65 +24,24 @@ export async function processStreamingResponse(
   getStream: () => Promise<unknown>,
   onChunk: (chunk: string) => void,
   shouldTerminate: () => Promise<boolean>,
-  chunkTimeout?: number,
-  requireConsecutiveTermination?: boolean,
-): Promise<void>
-
-/**
- * Process a streaming response with additional options
- */
-export async function processStreamingResponse(
-  getStream: () => Promise<unknown>,
-  onChunk: (chunk: string) => void,
-  shouldTerminate: () => Promise<boolean>,
-  options: StreamProcessingOptions,
-): Promise<void>
-
-export async function processStreamingResponse(
-  getStream: () => Promise<unknown>,
-  onChunk: (chunk: string) => void,
-  shouldTerminate: () => Promise<boolean>,
-  chunkTimeoutOrOptions: number | StreamProcessingOptions = 2000,
+  chunkTimeout = 2000,
   requireConsecutiveTermination = true,
 ): Promise<void> {
-  // Handle overloaded parameters
-  const options: StreamProcessingOptions =
-    typeof chunkTimeoutOrOptions === 'number'
-      ? { chunkTimeout: chunkTimeoutOrOptions, requireConsecutiveTermination }
-      : chunkTimeoutOrOptions
-
-  const {
-    chunkTimeout = 2000,
-    requireConsecutiveTermination: requireConsecutive = true,
-    encoding = 'utf8',
-    signal,
-  } = options
-
   let exitCheckStreak = 0
   let terminated = false
 
-  // Create text decoder for consistent string conversion
-  const decoder = new TextDecoder(encoding === 'binary' ? 'latin1' : encoding)
+  // Create text decoder for consistent UTF-8 conversion across all environments
+  const decoder = new TextDecoder('utf-8')
 
   try {
     // Get the stream response
     const response = await getStream()
 
     // Create universal stream that works across all environments
-    const stream = createUniversalStream(response, { encoding: encoding as 'utf8' | 'binary' })
-
-    // Check for abort signal
-    const checkAborted = () => {
-      if (signal?.aborted) {
-        terminated = true
-        throw new DaytonaError('Stream processing aborted', 'STREAM_ABORTED')
-      }
-    }
+    const stream = createUniversalStream(response)
 
     // Process stream chunks
     for await (const chunk of stream) {
-      checkAborted()
-
       if (terminated) break
 
       if (chunk && chunk.length > 0) {
@@ -118,12 +52,13 @@ export async function processStreamingResponse(
           exitCheckStreak = 0
         }
       } else {
-        // Empty chunk - check if we should terminate
-        const shouldEnd = await withTimeout(shouldTerminate(), chunkTimeout, false)
+        // Empty chunk - check if we should terminate with timeout
+        const timeoutPromise = new Promise<boolean>((resolve) => setTimeout(() => resolve(false), chunkTimeout))
+        const shouldEnd = await Promise.race([shouldTerminate(), timeoutPromise])
 
         if (shouldEnd) {
           exitCheckStreak += 1
-          if (!requireConsecutive || exitCheckStreak > 1) {
+          if (!requireConsecutiveTermination || exitCheckStreak > 1) {
             terminated = true
             break
           }

@@ -178,44 +178,46 @@ export function createUniversalStream(
 }
 ```
 
-#### 4. Refactored processStreamingResponse
+#### 4. Refactored processStreamingResponse (Simplified)
 
 ```typescript
 export async function processStreamingResponse(
   getStream: () => Promise<unknown>,
   onChunk: (chunk: string) => void,
   shouldTerminate: () => Promise<boolean>,
-  options: StreamProcessingOptions = {}
+  chunkTimeout = 2000,
+  requireConsecutiveTermination = true,
 ): Promise<void> {
-  const {
-    chunkTimeout = 2000,
-    requireConsecutiveTermination = true,
-    encoding = 'utf8',
-    signal,
-  } = options;
-
   const response = await getStream();
-  const stream = createUniversalStream(response, { encoding });
+  const stream = createUniversalStream(response);
 
   let exitCheckStreak = 0;
-  const decoder = new TextDecoder(encoding);
+  let terminated = false;
+
+  // Use TextDecoder for consistent UTF-8 conversion across all environments
+  const decoder = new TextDecoder('utf-8');
 
   try {
     for await (const chunk of stream) {
-      // Check abort signal
-      if (signal?.aborted) {
-        throw new DaytonaError('Stream processing aborted', 'STREAM_ABORTED');
-      }
+      if (terminated) break;
 
-      if (chunk.length > 0) {
-        onChunk(decoder.decode(chunk, { stream: true }));
-        exitCheckStreak = 0;
+      if (chunk && chunk.length > 0) {
+        const text = decoder.decode(chunk, { stream: true });
+        if (text) {
+          onChunk(text);
+          exitCheckStreak = 0;
+        }
       } else {
         // Handle empty chunks with termination logic
-        const shouldEnd = await withTimeout(shouldTerminate(), chunkTimeout);
+        const timeoutPromise = new Promise<boolean>((resolve) =>
+          setTimeout(() => resolve(false), chunkTimeout)
+        );
+        const shouldEnd = await Promise.race([shouldTerminate(), timeoutPromise]);
+
         if (shouldEnd) {
           exitCheckStreak += 1;
           if (!requireConsecutiveTermination || exitCheckStreak > 1) {
+            terminated = true;
             break;
           }
         } else {
@@ -229,13 +231,36 @@ export async function processStreamingResponse(
     if (remaining) {
       onChunk(remaining);
     }
-  } finally {
-    await stream.cancel();
+  } catch (error) {
+    // Error handling remains the same
+    terminated = true;
+    if (error instanceof DaytonaError) {
+      throw error;
+    }
+    throw new DaytonaError(
+      `Stream processing error: ${error instanceof Error ? error.message : String(error)}`,
+      'STREAM_PROCESSING_ERROR',
+    );
   }
 }
 ```
 
+**Simplifications made:**
+
+- Removed `StreamProcessingOptions` interface - not needed for MVP
+- Removed `encoding` parameter - always use UTF-8
+- Removed `signal` support - not used by any callers
+- Removed function overloads - simplified to single signature
+- Inlined timeout logic instead of using exported `withTimeout` helper
+
 ### Implementation Details
+
+**API Surface Reduction:**
+
+- Only `createUniversalStream` is exported from UniversalStream.ts
+- Stream adapter classes are internal implementation details
+- Type guards in runtime.ts are exported only for internal use
+- Removed unnecessary helper functions
 
 #### Web Streams Adapter
 

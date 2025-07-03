@@ -33,7 +33,7 @@ interface NodeReadableStream extends NodeJS.ReadableStream {
 /**
  * Universal stream interface that works across all JavaScript runtimes
  */
-export interface UniversalStream {
+interface UniversalStream {
   /**
    * Async iteration support for consuming stream data
    */
@@ -51,21 +51,14 @@ export interface UniversalStream {
 }
 
 /**
- * Options for creating universal streams
- */
-export interface UniversalStreamOptions {
-  encoding?: 'utf8' | 'binary'
-}
-
-/**
  * Adapter for Web Streams API (Cloudflare Workers, Browsers, Deno)
  */
-export class WebStreamAdapter implements UniversalStream {
+class WebStreamAdapter implements UniversalStream {
   private reader: ReadableStreamDefaultReader<Uint8Array> | null = null
   private stream: ReadableStream<Uint8Array>
   private _cancelled = false
 
-  constructor(stream: ReadableStream<Uint8Array>, _options?: UniversalStreamOptions) {
+  constructor(stream: ReadableStream<Uint8Array>) {
     this.stream = stream
   }
 
@@ -111,11 +104,11 @@ export class WebStreamAdapter implements UniversalStream {
 /**
  * Adapter for Node.js streams (backward compatibility)
  */
-export class NodeStreamAdapter implements UniversalStream {
+class NodeStreamAdapter implements UniversalStream {
   private destroyed = false
   private stream: NodeReadableStream
 
-  constructor(stream: NodeReadableStream, _options?: UniversalStreamOptions) {
+  constructor(stream: NodeReadableStream) {
     this.stream = stream
   }
 
@@ -242,14 +235,11 @@ export class NodeStreamAdapter implements UniversalStream {
 /**
  * Adapter for async iterables
  */
-export class AsyncIterableAdapter<T = Buffer | string | Uint8Array> implements UniversalStream {
+class AsyncIterableAdapter<T = Buffer | string | Uint8Array> implements UniversalStream {
   private cancelled = false
   private iterator: AsyncIterator<T> | null = null
 
-  constructor(
-    private iterable: AsyncIterable<T>,
-    private options?: UniversalStreamOptions,
-  ) {}
+  constructor(private iterable: AsyncIterable<T>) {}
 
   async *[Symbol.asyncIterator](): AsyncIterableIterator<Uint8Array> {
     if (this.cancelled) {
@@ -310,7 +300,7 @@ export class AsyncIterableAdapter<T = Buffer | string | Uint8Array> implements U
 /**
  * Factory function to create a universal stream from various sources
  */
-export function createUniversalStream(source: unknown, options?: UniversalStreamOptions): UniversalStream {
+export function createUniversalStream(source: unknown): UniversalStream {
   // Handle null/undefined
   if (!source) {
     throw new DaytonaError('Stream source is null or undefined', 'INVALID_STREAM_SOURCE')
@@ -318,30 +308,30 @@ export function createUniversalStream(source: unknown, options?: UniversalStream
 
   // Web Streams API (preferred for web environments)
   if (isReadableStream(source)) {
-    return new WebStreamAdapter(source as ReadableStream<Uint8Array>, options)
+    return new WebStreamAdapter(source as ReadableStream<Uint8Array>)
   }
 
   // Axios response object with body property (Cloudflare Workers, fetch responses)
   if (typeof source === 'object' && 'body' in source) {
     const body = (source as { body: unknown }).body
     if (isReadableStream(body)) {
-      return new WebStreamAdapter(body, options)
+      return new WebStreamAdapter(body)
     }
   }
 
   // Node.js streams (for Node.js environments)
   if (RuntimeEnvironment.isNode() && isNodeStream(source)) {
-    return new NodeStreamAdapter(source as NodeReadableStream, options)
+    return new NodeStreamAdapter(source as NodeReadableStream)
   }
 
   // Async iterables
   if (isAsyncIterable(source)) {
-    return new AsyncIterableAdapter(source, options)
+    return new AsyncIterableAdapter(source)
   }
 
   // If we have a data property, check if it's a stream (Axios response pattern)
   if (typeof source === 'object' && 'data' in source) {
-    return createUniversalStream((source as { data: unknown }).data, options)
+    return createUniversalStream((source as { data: unknown }).data)
   }
 
   throw new DaytonaError(
@@ -350,12 +340,4 @@ export function createUniversalStream(source: unknown, options?: UniversalStream
       `Runtime: ${RuntimeEnvironment.detect()}`,
     'UNSUPPORTED_STREAM_TYPE',
   )
-}
-
-/**
- * Helper function to handle timeout with async operations
- */
-export async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutValue?: T): Promise<T> {
-  const timeoutPromise = new Promise<T>((resolve) => setTimeout(() => resolve(timeoutValue as T), timeoutMs))
-  return Promise.race([promise, timeoutPromise])
 }

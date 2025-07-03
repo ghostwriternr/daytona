@@ -79,7 +79,7 @@ export const RuntimeEnvironment = {
 /**
  * Type guard to check if an object is a Node.js stream
  */
-export function isNodeStream(obj: unknown): boolean {
+function isNodeStream(obj: unknown): boolean {
   return (
     obj !== null &&
     typeof obj === 'object' &&
@@ -97,7 +97,7 @@ export function isNodeStream(obj: unknown): boolean {
 /**
  * Type guard to check if an object is async iterable
  */
-export function isAsyncIterable<T = unknown>(obj: unknown): obj is AsyncIterable<T> {
+function isAsyncIterable<T = unknown>(obj: unknown): obj is AsyncIterable<T> {
   return (
     obj !== null &&
     typeof obj === 'object' &&
@@ -109,7 +109,7 @@ export function isAsyncIterable<T = unknown>(obj: unknown): obj is AsyncIterable
 /**
  * Type guard to check if an object is a Web ReadableStream
  */
-export function isReadableStream(obj: unknown): obj is ReadableStream {
+function isReadableStream(obj: unknown): obj is ReadableStream {
   return (
     obj !== null &&
     typeof obj === 'object' &&
@@ -119,3 +119,6 @@ export function isReadableStream(obj: unknown): obj is ReadableStream {
     typeof obj.cancel === 'function'
   )
 }
+
+// Export type guards for internal use by UniversalStream
+export { isNodeStream, isAsyncIterable, isReadableStream }
