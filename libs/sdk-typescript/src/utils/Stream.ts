@@ -85,10 +85,7 @@ export async function processStreamingResponse(
     }
 
     // Wrap other errors
-    throw new DaytonaError(
-      `Stream processing error: ${error instanceof Error ? error.message : String(error)}`,
-      'STREAM_PROCESSING_ERROR',
-    )
+    throw new DaytonaError(`Stream processing error: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
 

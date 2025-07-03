@@ -59,7 +59,7 @@ class WebStreamAdapter implements UniversalStream {
 
   async *[Symbol.asyncIterator](): AsyncIterableIterator<Uint8Array> {
     if (this._cancelled) {
-      throw new DaytonaError('Stream has been cancelled', 'STREAM_CANCELLED')
+      throw new DaytonaError('Stream has been cancelled')
     }
 
     this.reader = this.stream.getReader()
@@ -105,7 +105,7 @@ class NodeStreamAdapter implements UniversalStream {
 
   async *[Symbol.asyncIterator](): AsyncIterableIterator<Uint8Array> {
     if (this.destroyed) {
-      throw new DaytonaError('Stream has been destroyed', 'STREAM_DESTROYED')
+      throw new DaytonaError('Stream has been destroyed')
     }
 
     // Use Node.js native async iteration if available
@@ -200,10 +200,7 @@ class NodeStreamAdapter implements UniversalStream {
       return new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength)
     }
 
-    throw new DaytonaError(
-      `Unexpected chunk type: ${typeof chunk}. Expected Uint8Array, string, or Buffer`,
-      'INVALID_CHUNK_TYPE',
-    )
+    throw new DaytonaError(`Unexpected chunk type: ${typeof chunk}. Expected Uint8Array, string, or Buffer`)
   }
 
   async cancel(): Promise<void> {
@@ -225,7 +222,7 @@ class NodeStreamAdapter implements UniversalStream {
 export function createUniversalStream(source: unknown): UniversalStream {
   // Handle null/undefined
   if (!source) {
-    throw new DaytonaError('Stream source is null or undefined', 'INVALID_STREAM_SOURCE')
+    throw new DaytonaError('Stream source is null or undefined')
   }
 
   // Web Streams API (preferred for web environments)
@@ -255,6 +252,5 @@ export function createUniversalStream(source: unknown): UniversalStream {
     `Unsupported stream type. Expected ReadableStream or Node.js Stream. ` +
       `Got: ${source?.constructor?.name || typeof source}. ` +
       `Runtime: ${RuntimeEnvironment.isNode() ? 'node' : 'web'}`,
-    'UNSUPPORTED_STREAM_TYPE',
   )
 }
